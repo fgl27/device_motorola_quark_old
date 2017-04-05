@@ -27,7 +27,7 @@
 
 import init.qcom.usb.rc
 import init.qcom.power.rc
-# import init.mmi.volte.rc
+import init.mmi.volte.rc
 
 on early-init
     mount debugfs debugfs /sys/kernel/debug
@@ -58,7 +58,7 @@ on init
     write /proc/self/coredump_filter "0x7f"
 
     # Symbols required for motorola blobs
-    export LD_SHIM_LIBS /system/bin/thermal-engine|libshims_thermal.so:/system/vendor/lib/libqc-opt.so|libshim_qcopt.so
+    export LD_SHIM_LIBS /system/bin/thermal-engine|libshims_thermal.so:/system/vendor/lib/libqc-opt.so|libshim_qcopt.so:/system/vendor/lib/lib-imsvt.so|libshims_ims.so
 
 on charger
     trigger early-fs

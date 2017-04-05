@@ -280,6 +280,10 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/configs/qcril.db:system/etc/motorola/qcril.db \
     $(LOCAL_PATH)/configs/qmi_config.xml:system/etc/data/qmi_config.xml
 
+# For android_filesystem_config.h
+PRODUCT_PACKAGES += \
+    fs_config_files
+
 PRODUCT_PACKAGES += \
     librmnetctl
 
@@ -326,4 +330,5 @@ PRODUCT_COPY_FILES += \
 # shims
 PRODUCT_PACKAGES += \
     libshims_thermal \
-    libshim_qcopt
+    libshim_qcopt \
+    libshims_ims
