@@ -280,7 +280,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/configs/qcril.db:system/etc/motorola/qcril.db \
     $(LOCAL_PATH)/configs/qmi_config.xml:system/etc/data/qmi_config.xml
 
-# For android_filesystem_config.h
+# For include/android_filesystem_config.h
 PRODUCT_PACKAGES += \
     fs_config_files
 
