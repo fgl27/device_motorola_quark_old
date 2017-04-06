@@ -62,6 +62,7 @@ service imscmservice /system/bin/imscmservice
 on property:sys.ims.DATA_DAEMON_STATUS=1
    start ims_rtp_daemon
    start imscmservice
+   start config-rcs-on
 
 # Config volte related prioperties
 service config-rcs-on /system/bin/sh /system/bin/rcs_config.sh on
