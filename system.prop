@@ -164,7 +164,8 @@ dalvik.vm.image-dex2oat-threads=4
 # Reboot Shutdown timeout
 ro.build.shutdown_timeout=7
 
-# IMS
+# IMS/VoLTE
+persist.dbg.volte_avail_ovr=1
 persist.radio.jbims=1
 persist.radio.ROTATION_ENABLE=1
 persist.radio.VT_ENABLE=1
