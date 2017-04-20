@@ -52,8 +52,16 @@ service ims_rtp_daemon /system/bin/ims_rtp_daemon
    group radio net_raw diag qcom_diag log inet
    disabled
 
+service imscmservice /system/bin/imscmservice
+    class main
+    user system
+    seclabel u:r:init:s0
+    group radio net_raw diag diag log
+    disabled
+
 on property:sys.ims.DATA_DAEMON_STATUS=1
    start ims_rtp_daemon
+   start imscmservice
    start config-rcs-on
 
 # Config volte related prioperties
