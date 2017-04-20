@@ -23,6 +23,7 @@ if [ "$1" = "on" ]; then
     setprop persist.data.iwlan.enable true
     setprop persist.sys.cnd.iwlan 1
     setprop persist.cne.logging.qxdm 3974
+    setprop net.lte.volte_call_capable true
     if [ "$idle" = "1" ]; then
         pm enable com.qualcomm.qti.rcsbootstraputil
         pm enable com.qualcomm.qti.rcsimsbootstraputil
@@ -47,6 +48,7 @@ elif [ "$1" = "off" ]; then
     setprop persist.data.iwlan.enable false
     setprop persist.sys.cnd.iwlan 0
     setprop persist.cne.logging.qxdm 0
+    setprop net.lte.volte_call_capable false
     if [ "$idle" = "1" ]; then
         pm disable com.qualcomm.qti.rcsbootstraputil
         pm disable com.qualcomm.qti.rcsimsbootstraputil
