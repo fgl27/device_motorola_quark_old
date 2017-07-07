@@ -60,7 +60,7 @@ public class IrGestureSensor implements ScreenStateNotifier, SensorEventListener
                 public void run() {
                     if (mEnabled && mScreenOn) {
                         Log.d(TAG, "Disabling");
-                        mSensorHelper.unregisterListener(this);
+                        mSensorHelper.unregisterListener(IrGestureSensor.this);
                         mIrGestureVote.voteForSensors(0);
                         mEnabled = false;
                     }
