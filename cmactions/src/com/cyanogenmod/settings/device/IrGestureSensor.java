@@ -45,7 +45,7 @@ public class IrGestureSensor implements ScreenStateNotifier, SensorEventListener
     private boolean mEnabled, mScreenOn, mtempOn, mtempOff;
 
     public IrGestureSensor(CMActionsSettings cmActionsSettings, SensorHelper sensorHelper,
-                SensorAction action, IrGestureManager irGestureManager) {
+                SensorAction action, IrGestureManager irGestureManager, Context context) {
         mCMActionsSettings = cmActionsSettings;
         mSensorHelper = sensorHelper;
         mSensorAction = action;
@@ -54,7 +54,7 @@ public class IrGestureSensor implements ScreenStateNotifier, SensorEventListener
         mSensor = sensorHelper.getIrGestureSensor();
         mIrGestureVote.voteForSensors(0);
 
-        mPowerManager = (PowerManager) this.getSystemService(Context.POWER_SERVICE);
+        mPowerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         mWakeLock = mPowerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CMActionsWakeLock");
     }
 
