@@ -41,7 +41,7 @@ public class IrGestureSensor implements ScreenStateNotifier, SensorEventListener
     private final PowerManager mPowerManager;
     private PowerManager.WakeLock mWakeLock;
 
-    private boolean mEnabled, mScreenOn;
+    private boolean mEnabled, mScreenOn, mtempOn, mtempOff;
 
     public IrGestureSensor(CMActionsSettings cmActionsSettings, SensorHelper sensorHelper,
                 SensorAction action, IrGestureManager irGestureManager) {
@@ -60,7 +60,8 @@ public class IrGestureSensor implements ScreenStateNotifier, SensorEventListener
     @Override
     public void screenTurnedOn() {
         mScreenOn = true;
-        if (mEnabled) {
+        if (mEnabled && !mtempOn) {
+            mtempOn = true;
             new Timer().schedule(
                 new TimerTask() {
                     @Override
@@ -71,6 +72,7 @@ public class IrGestureSensor implements ScreenStateNotifier, SensorEventListener
                             mIrGestureVote.voteForSensors(0);
                             mEnabled = false;
                         }
+                        mtempOn = false;
                     }
                 },
                 1000
@@ -81,7 +83,8 @@ public class IrGestureSensor implements ScreenStateNotifier, SensorEventListener
     @Override
     public void screenTurnedOff() {
         mScreenOn = false;
-        if (mCMActionsSettings.isIrWakeupEnabled() && !mEnabled) {
+        if (mCMActionsSettings.isIrWakeupEnabled() && !mEnabled && !mtempOff) {
+            mtempOff = true;
             if (mWakeLock == null)
                 mWakeLock = mPowerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CMActionsWakeLock");
             else if (!mWakeLock.isHeld()) {
@@ -98,6 +101,7 @@ public class IrGestureSensor implements ScreenStateNotifier, SensorEventListener
                             mIrGestureVote.voteForSensors(IR_GESTURES_FOR_SCREEN_OFF);
                             mEnabled = true;
                         }
+                        mtempOff = false;
                         mWakeLock.release();
                     }
                 },
