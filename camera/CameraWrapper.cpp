@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2016, The CyanogenMod Project
+ * Copyright (C) 2012-2016, The CyanogenMod Project
+ * Copyright (C) 2017 The LineageOS Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +19,7 @@
 * @file CameraWrapper.cpp
 *
 * This file wraps a vendor camera module.
-*
 */
-
-//#define LOG_NDEBUG 0
 
 #define LOG_TAG "CameraWrapper"
 #include <cutils/log.h>
@@ -32,11 +30,24 @@
 #include <hardware/camera.h>
 #include <camera/Camera.h>
 #include <camera/CameraParameters.h>
+#include <cutils/log.h>
+
+#define BACK_CAMERA_ID 0
+#define FRONT_CAMERA_ID 1
 
 using namespace android;
 
+// Wrapper specific parameters names
+static const char KEY_DIS[] = "dis";
+static const char DIS_DISABLE[] = "disable";
+static const char ZSL_OFF[] = "off";
+static const char ZSL_ON[] = "on";
+static const char KEY_ZSL[] = "zsl";
+
 static Mutex gCameraWrapperLock;
 static camera_module_t *gVendorModule = 0;
+
+static char **fixed_set_params = NULL;
 
 static int camera_device_open(const hw_module_t *module, const char *name,
         hw_device_t **device);
@@ -56,20 +67,20 @@ camera_module_t HAL_MODULE_INFO_SYM =
          .module_api_version = CAMERA_MODULE_API_VERSION_1_0,
          .hal_api_version = HARDWARE_HAL_API_VERSION,
          .id = CAMERA_HARDWARE_MODULE_ID,
-         .name = "Moto MAXX Camera Wrapper",
-         .author = "The CyanogenMod Project",
+         .name = "APQ8084 Camera Wrapper",
+         .author = "The LineageOS Project",
          .methods = &camera_module_methods,
-         .dso = NULL, /* remove compilation warnings */
-         .reserved = {0}, /* remove compilation warnings */
+         .dso = NULL,
+         .reserved = {0},
     },
     .get_number_of_cameras = camera_get_number_of_cameras,
     .get_camera_info = camera_get_camera_info,
-    .set_callbacks = NULL, /* remove compilation warnings */
-    .get_vendor_tag_ops = NULL, /* remove compilation warnings */
-    .open_legacy = NULL, /* remove compilation warnings */
-    .set_torch_mode = NULL, /* remove compilation warnings */
-    .init = NULL, /* remove compilation warnings */
-    .reserved = {0}, /* remove compilation warnings */
+    .set_callbacks = NULL,
+    .get_vendor_tag_ops = NULL,
+    .open_legacy = NULL,
+    .set_torch_mode = NULL,
+    .init = NULL,
+    .reserved = {0},
 };
 
 struct wrapper_camera_device_t
@@ -96,33 +107,66 @@ static int check_vendor_module()
 
     rv = hw_get_module_by_class("camera", "vendor", (const hw_module_t**)&gVendorModule);
     if (rv)
-        ALOGE("failed to open vendor camera module");
+        ALOGE("Failed to open vendor camera module %d", rv);
+
     return rv;
 }
 
-static char *camera_fixup_getparams(int id __attribute__((unused)), const char *settings)
+#define KEY_VIDEO_HFR_VALUES "video-hfr-values"
+
+// nv12-venus is needed for blobs, but
+// framework has no idea what it is
+#define PIXEL_FORMAT_NV12_VENUS "nv12-venus"
+
+static bool is_4k_video(CameraParameters &params) {
+    int video_width, video_height;
+    params.getVideoSize(&video_width, &video_height);
+    ALOGV("%s : VideoSize is %x", __FUNCTION__, video_width * video_height);
+    return video_width * video_height == 3840 * 2160;
+}
+
+static char *camera_fixup_getparams(int __attribute__((unused)) id, const char *settings)
 {
     CameraParameters params;
     params.unflatten(String8(settings));
 
-#if !LOG_NDEBUG
     ALOGV("%s: original parameters:", __FUNCTION__);
     params.dump();
-#endif
 
-    params.remove("hdr-need-1x");
-    const char *pf = params.get(CameraParameters::KEY_PREVIEW_FORMAT);
-    if (pf && strcmp(pf, "nv12-venus") == 0) {
-        params.set(CameraParameters::KEY_PREVIEW_FORMAT, "yuv420sp");
+    const char *recordHint = params.get(CameraParameters::KEY_RECORDING_HINT);
+    bool videoMode = recordHint ? !strcmp(recordHint, "true") : false;
+
+    //Hide nv12-venus from Android.
+    if (strcmp (params.getPreviewFormat(), PIXEL_FORMAT_NV12_VENUS) == 0)
+          params.setPreviewFormat(params.PIXEL_FORMAT_YUV420SP);
+
+    const char *videoSizeValues = params.get(
+            CameraParameters::KEY_SUPPORTED_VIDEO_SIZES);
+    if (videoSizeValues) {
+        char videoSizes[strlen(videoSizeValues) + 10 + 1];
+        sprintf(videoSizes, "3840x2160,%s", videoSizeValues);
+        params.set(CameraParameters::KEY_SUPPORTED_VIDEO_SIZES,
+                videoSizes);
     }
 
-    params.set("face-detection-values", "off,on");
-    params.set("denoise-values", "denoise-off,denoise-on");
+    /* If the vendor has HFR values but doesn't also expose that
+     * this can be turned off, fixup the params to tell the Camera
+     * that it really is okay to turn it off.
+     */
+    const char *hfrModeValues = params.get(KEY_VIDEO_HFR_VALUES);
+    if (hfrModeValues && !strstr(hfrModeValues, "off")) {
+        char hfrModes[strlen(hfrModeValues) + 4 + 1];
+        sprintf(hfrModes, "%s,off", hfrModeValues);
+        params.set(KEY_VIDEO_HFR_VALUES, hfrModes);
+    }
 
-#if !LOG_NDEBUG
-    ALOGV("%s: fixed parameters:", __FUNCTION__);
+    /* Enforce video-snapshot-supported to true */
+    if (videoMode) {
+        params.set(CameraParameters::KEY_VIDEO_SNAPSHOT_SUPPORTED, "true");
+    }
+
+    ALOGV("%s: Fixed parameters:", __FUNCTION__);
     params.dump();
-#endif
 
     String8 strParams = params.flatten();
     char *ret = strdup(strParams.string());
@@ -130,17 +174,66 @@ static char *camera_fixup_getparams(int id __attribute__((unused)), const char *
     return ret;
 }
 
+static char *camera_fixup_setparams(int id, const char *settings)
+{
+    CameraParameters params;
+    params.unflatten(String8(settings));
+
+    ALOGV("%s: original parameters:", __FUNCTION__);
+    params.dump();
+
+    bool wasTorch = false;
+    if (fixed_set_params[id]) {
+        /* When torch mode is switched off, it is important not to set ZSL, to
+           avoid a segmentation violation in libcameraservice.so. Hence, check
+           if the last call to setparams enabled torch mode */
+        CameraParameters old_params;
+        old_params.unflatten(String8(fixed_set_params[id]));
+
+        const char *old_flashMode = old_params.get(CameraParameters::KEY_FLASH_MODE);
+        wasTorch = old_flashMode && !strcmp(old_flashMode, CameraParameters::FLASH_MODE_TORCH);
+    }
+
+    const char *recordingHint = params.get(CameraParameters::KEY_RECORDING_HINT);
+    bool isVideo = recordingHint && !strcmp(recordingHint, "true");
+    const char *flashMode = params.get(CameraParameters::KEY_FLASH_MODE);
+    bool isTorch = flashMode && !strcmp(flashMode, CameraParameters::FLASH_MODE_TORCH);
+
+    if (!isTorch && !wasTorch) {
+        if (isVideo) {
+            params.set(KEY_DIS, DIS_DISABLE);
+            params.set(KEY_ZSL, ZSL_OFF);
+        } else {
+            params.set(KEY_ZSL, ZSL_ON);
+        }
+    }
+
+    params.set(CameraParameters::KEY_PREVIEW_FPS_RANGE, "8000,30000");
+
+    ALOGV("%s: Fixed parameters:", __FUNCTION__);
+    params.dump();
+
+    String8 strParams = params.flatten();
+    if (fixed_set_params[id])
+        free(fixed_set_params[id]);
+    fixed_set_params[id] = strdup(strParams.string());
+    char *ret = fixed_set_params[id];
+
+    return ret;
+}
+
 /*******************************************************************
- * implementation of camera_device_ops functions
+ * Implementation of camera_device_ops functions
  *******************************************************************/
+static char *camera_get_parameters(struct camera_device *device);
+static int camera_set_parameters(struct camera_device *device, const char *params);
 
 static int camera_set_preview_window(struct camera_device *device, struct preview_stream_ops *window)
 {
     if (!device)
         return -EINVAL;
 
-    ALOGV("%s->%08X->%08X", __FUNCTION__, (uintptr_t)device,
-            (uintptr_t)(((wrapper_camera_device_t*)device)->vendor));
+    ALOGV("%s->%08X->%08X", __FUNCTION__, (uintptr_t)device, (uintptr_t)(((wrapper_camera_device_t*)device)->vendor));
 
     return VENDOR_CALL(device, set_preview_window, window);
 }
@@ -153,10 +246,12 @@ static void camera_set_callbacks(struct camera_device *device, camera_notify_cal
 
     ALOGV("%s->%08X->%08X", __FUNCTION__, (uintptr_t)device, (uintptr_t)(((wrapper_camera_device_t*)device)->vendor));
 
-    VENDOR_CALL(device, set_callbacks, notify_cb, data_cb, data_cb_timestamp, get_memory, user);
+    VENDOR_CALL(device, set_callbacks, notify_cb, data_cb, data_cb_timestamp,
+            get_memory, user);
 }
 
-static void camera_enable_msg_type(struct camera_device *device, int32_t msg_type)
+static void camera_enable_msg_type(struct camera_device *device,
+        int32_t msg_type)
 {
     if (!device)
         return;
@@ -166,7 +261,8 @@ static void camera_enable_msg_type(struct camera_device *device, int32_t msg_typ
     VENDOR_CALL(device, enable_msg_type, msg_type);
 }
 
-static void camera_disable_msg_type(struct camera_device *device, int32_t msg_type)
+static void camera_disable_msg_type(struct camera_device *device,
+        int32_t msg_type)
 {
     if (!device)
         return;
@@ -176,7 +272,8 @@ static void camera_disable_msg_type(struct camera_device *device, int32_t msg_ty
     VENDOR_CALL(device, disable_msg_type, msg_type);
 }
 
-static int camera_msg_type_enabled(struct camera_device *device, int32_t msg_type)
+static int camera_msg_type_enabled(struct camera_device *device,
+        int32_t msg_type)
 {
     if (!device)
         return 0;
@@ -216,7 +313,8 @@ static int camera_preview_enabled(struct camera_device *device)
     return VENDOR_CALL(device, preview_enabled);
 }
 
-static int camera_store_meta_data_in_buffers(struct camera_device *device, int enable)
+static int camera_store_meta_data_in_buffers(struct camera_device *device,
+        int enable)
 {
     if (!device)
         return -EINVAL;
@@ -232,6 +330,15 @@ static int camera_start_recording(struct camera_device *device)
         return EINVAL;
 
     ALOGV("%s->%08X->%08X", __FUNCTION__, (uintptr_t)device, (uintptr_t)(((wrapper_camera_device_t*)device)->vendor));
+
+    CameraParameters parameters;
+    parameters.unflatten(String8(camera_get_parameters(device)));
+
+    if (is_4k_video(parameters)) {
+        ALOGV("%s : UHD detected, switching preview-format to nv12-venus", __FUNCTION__);
+        parameters.setPreviewFormat(PIXEL_FORMAT_NV12_VENUS);
+        camera_set_parameters(device, strdup(parameters.flatten().string()));
+    }
 
     return VENDOR_CALL(device, start_recording);
 }
@@ -307,15 +414,17 @@ static int camera_cancel_picture(struct camera_device *device)
     return VENDOR_CALL(device, cancel_picture);
 }
 
-static int camera_set_parameters(struct camera_device *device, const char *params)
+static int camera_set_parameters(struct camera_device *device,
+        const char *params)
 {
     if (!device)
         return -EINVAL;
 
     ALOGV("%s->%08X->%08X", __FUNCTION__, (uintptr_t)device, (uintptr_t)(((wrapper_camera_device_t*)device)->vendor));
 
-    int ret = VENDOR_CALL(device, set_parameters, params);
-    return ret;
+    char *tmp = camera_fixup_setparams(CAMERA_ID(device), params);
+
+    return VENDOR_CALL(device, set_parameters, tmp);
 }
 
 static char *camera_get_parameters(struct camera_device *device)
@@ -334,7 +443,7 @@ static char *camera_get_parameters(struct camera_device *device)
     return params;
 }
 
-static void camera_put_parameters(struct camera_device *device, char *params)
+static void camera_put_parameters(__unused struct camera_device *device, char *params)
 {
     if (params)
         free(params);
@@ -387,12 +496,18 @@ static int camera_device_close(hw_device_t *device)
         goto done;
     }
 
+    for (int i = 0; i < camera_get_number_of_cameras(); i++) {
+        if (fixed_set_params[i])
+            free(fixed_set_params[i]);
+    }
+
     wrapper_dev = (wrapper_camera_device_t*) device;
 
     wrapper_dev->vendor->common.close((hw_device_t*)wrapper_dev->vendor);
     if (wrapper_dev->base.ops)
         free(wrapper_dev->base.ops);
     free(wrapper_dev);
+
 done:
 #ifdef HEAPTRACKER
     heaptracker_free_leaked_memory();
@@ -401,20 +516,22 @@ done:
 }
 
 /*******************************************************************
- * implementation of camera_module functions
+ * Implementation of camera_module functions
  *******************************************************************/
 
-/* open device handle to one of the cameras
+/*
+ * Open device handle to one of the cameras
  *
- * assume camera service will keep singleton of each camera
+ * Assume camera service will keep singleton of each camera
  * so this function will always only be called once per camera instance
  */
 
-static int camera_device_open(const hw_module_t *module, const char *name, hw_device_t **device)
+static int camera_device_open(const hw_module_t *module, const char *name,
+        hw_device_t **device)
 {
     int rv = 0;
     int num_cameras = 0;
-    int cameraid;
+    int camera_id;
     wrapper_camera_device_t *camera_device = NULL;
     camera_device_ops_t *camera_ops = NULL;
 
@@ -427,12 +544,21 @@ static int camera_device_open(const hw_module_t *module, const char *name, hw_de
         if (check_vendor_module())
             return -EINVAL;
 
-        cameraid = atoi(name);
+        camera_id = atoi(name);
         num_cameras = gVendorModule->get_number_of_cameras();
 
-        if (cameraid > num_cameras)
-        {
-            ALOGE("camera service provided cameraid out of bounds, cameraid = %d, num supported = %d", cameraid, num_cameras);
+        fixed_set_params = (char **) malloc(sizeof(char *) *num_cameras);
+        if (!fixed_set_params) {
+            ALOGE("Parameter memory allocation fail");
+            rv = -ENOMEM;
+            goto fail;
+        }
+        memset(fixed_set_params, 0, sizeof(char *) * num_cameras);
+
+        if (camera_id > num_cameras) {
+            ALOGE("Camera service provided camera_id out of bounds, "
+                    "camera_id = %d, num supported = %d",
+                    camera_id, num_cameras);
             rv = -EINVAL;
             goto fail;
         }
@@ -445,7 +571,7 @@ static int camera_device_open(const hw_module_t *module, const char *name, hw_de
             goto fail;
         }
         memset(camera_device, 0, sizeof(*camera_device));
-        camera_device->id = cameraid;
+        camera_device->id = camera_id;
 
         rv = gVendorModule->common.methods->open((const hw_module_t*)gVendorModule, name, (hw_device_t**)&(camera_device->vendor));
         if (rv)
@@ -453,7 +579,7 @@ static int camera_device_open(const hw_module_t *module, const char *name, hw_de
             ALOGE("vendor camera open fail");
             goto fail;
         }
-        ALOGV("%s: got vendor camera device 0x%08X", __FUNCTION__, (uintptr_t)(camera_device->vendor));
+        ALOGV("%s: Got vendor camera device 0x%08X", __FUNCTION__, (uintptr_t)(camera_device->vendor));
 
         camera_ops = (camera_device_ops_t*)malloc(sizeof(*camera_ops));
         if (!camera_ops)
