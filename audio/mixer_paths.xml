@@ -831,6 +831,8 @@
 
 <!-- Dual MIC devices -->
 	<path name="dmic-endfire">
+	<!-- Port mixer is common bit for all voice verbs -->
+		<ctl name="QUAT_MI2S_RX Port Mixer SLIM_1_TX" value="1" />
 		<ctl name="AIF1_CAP Mixer SLIM TX7" value="1" />
 		<ctl name="AIF1_CAP Mixer SLIM TX8" value="1" />
 		<ctl name="AIF2_CAP Mixer SLIM TX9" value="1" />
